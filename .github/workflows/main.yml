@@ -6,7 +6,7 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: 设置执行权限
+      - name: 设置PowerShell执行权限
         run: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
         shell: powershell
 
@@ -16,13 +16,14 @@ jobs:
           repository: fengchenkeji/Android-Proot-Builder
           path: proot-builder
 
-      - name: 编译全部架构，静态链接talloc
+      - name: 原生NDK编译（关闭Docker）
         working-directory: ./proot-builder
-        run: .\build-proot.ps1 -TallocLink static
+        run: .\build-proot.ps1 -TallocLink static -UseDocker:$false
         shell: powershell
 
-      - name: 打包产物
+      - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
           name: proot-static-bin
           path: proot-builder/output/**
+          #retention-days:30
