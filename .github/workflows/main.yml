@@ -1,0 +1,28 @@
+name: Build‑Proot‑Windows
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: 设置执行权限
+        run: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+        shell: powershell
+
+      - name: 拉取源码
+        uses: actions/checkout@v4
+        with:
+          repository: fengchenkeji/Android-Proot-Builder
+          path: proot-builder
+
+      - name: 编译全部架构，静态链接talloc
+        working-directory: ./proot-builder
+        run: .\build-proot.ps1 -TallocLink static
+        shell: powershell
+
+      - name: 打包产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: proot-static-bin
+          path: proot-builder/output/**
