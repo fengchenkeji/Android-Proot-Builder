@@ -45,7 +45,7 @@ Param(
     [string]$OutputPath = '',
     [string]$AndroidProjectRoot = '',
     [switch]$CopyToJniLibs,
-    
+
     [switch]$CopyToAssets,
     [switch]$ResetSource
     ,
@@ -142,6 +142,7 @@ function Build‑Image($arch) {
         'arm32' { 'armv7a' }
         'x86_64' { 'x86_64' }
     }
+    Write‑Info "DEBUG input arch=[$arch], mapped targetArch=[$targetArch]"
     Write‑Info "Building image: $imageName (target: $targetArch)"
     Write‑Info "  Platform: $platform"
     Write‑Info "  Dockerfile: $dockerfile"
@@ -180,6 +181,7 @@ function Build‑PRoot($arch, $outputDir) {
         'arm32' { 'armv7a' }
         'x86_64' { 'x86_64' }
     }
+    Write‑Info "DEBUG PRoot input arch=[$arch], mapped targetArch=[$targetArch]"
     # Ensure output directory exists
     New‑Item ‑ItemType Directory ‑Force ‑Path $outputDir | Out‑Null
     # Ensure source volume exists
@@ -199,24 +201,24 @@ function Build‑PRoot($arch, $outputDir) {
     $dockerArgs = @(
         'run',
         '‑‑name', $containerName,
-        '‑v', "${SourceVolumeName}:/build/src",
-        '‑v', "${scriptsPath}:/build/scripts:ro",
-        '‑v', "${outputDir}:/output",
-        '‑e', "TARGET_ARCH=$targetArch",
-        '‑e', "TALLOC_LINK=$TallocLink",
+        '-v', "${SourceVolumeName}:/build/src",
+        '-v', "${scriptsPath}:/build/scripts:ro",
+        '-v', "${outputDir}:/output",
+        '-e', "TARGET_ARCH=$targetArch",
+        '-e', "TALLOC_LINK=$TallocLink",
         $imageName
     )
     $process = Start‑Process ‑FilePath $dockerCmd ‑ArgumentList $dockerArgs ‑NoNewWindow ‑Wait ‑PassThru
     $buildExitCode = $process.ExitCode
-    
+
     Write‑Host ""
     Write‑Host "========================================" ‑ForegroundColor Cyan
-    
+
     # 构建完成后清理容器
     if (Test‑ContainerExists $arch) {
         docker rm $containerName 2>$null | Out‑Null
     }
-    
+
     if ($buildExitCode ‑ne 0) {
         Write‑Err "Build failed!"
         return $false
@@ -224,7 +226,7 @@ function Build‑PRoot($arch, $outputDir) {
     # Verify outputs
     $requiredFiles = @('libproot.so')
     $missingFiles = @()
-    
+
     foreach ($file in $requiredFiles) {
         if (‑not (Test‑Path (Join‑Path $outputDir $file))) {
             $missingFiles += $file
