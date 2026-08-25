@@ -136,7 +136,7 @@ function Build‑Image($arch) {
     # 使用 linux/amd64 构建，因为我们使用 Android NDK 交叉编译
     $platform = 'linux/amd64'
     $dockerfile = Join‑Path $scriptRoot "Dockerfile"
-    # 确定目标架构参数
+    # PowerShell参数映射为容器内部TARGET_ARCH标识符
     $targetArch = switch ($arch) {
         'arm64' { 'aarch64' }
         'arm32' { 'armv7a' }
@@ -174,7 +174,7 @@ function Ensure‑SourceVolume {
 function Build‑PRoot($arch, $outputDir) {
     $imageName = Get‑ImageName $arch
     $containerName = Get‑ContainerName $arch
-    # 确定目标架构参数
+    # 和Build‑Image保持完全一致映射
     $targetArch = switch ($arch) {
         'arm64' { 'aarch64' }
         'arm32' { 'armv7a' }
