@@ -438,8 +438,9 @@ if [ -d "${PROOT_DIR}" ]; then
         cd "${PROOT_DIR}"
         
         # 设置 talloc 路径
+        # proot 需编译为共享库（-shared），因此编译阶段必须加 -fPIC（位置无关代码）
         TALLOC_BUILD="${SRC_DIR}/talloc-build-${TARGET_ARCH}"
-        export CFLAGS="${CFLAGS} -I${TALLOC_BUILD}/include"
+        export CFLAGS="${CFLAGS} -fPIC -I${TALLOC_BUILD}/include"
         # proot 编译为真正的 shared object（-shared）
         # 注意：命令行 LDFLAGS 会覆盖 Makefile 中的 LDFLAGS += ...，
         #       因此必须手动包含 -ltalloc / -Wl,-z,noexecstack 等所有必要标志。
