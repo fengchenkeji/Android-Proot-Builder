@@ -35,6 +35,11 @@ jobs:
               echo "::error::Build failed for $arch (exit code: $exit_code)"
               echo "=== Last 100 lines of build log ==="
               tail -100 "$logfile"
+              # 将关键错误行输出到 annotations（匿名可见）
+              echo "=== Key errors (annotations) ==="
+              grep -iE 'error:|undefined reference|fatal|cannot find|No such file|relocation|ld\.lld|clang.*error' "$logfile" | tail -20 | while IFS= read -r line; do
+                echo "::error::[$arch] $line"
+              done
               failed=1
             else
               echo "=== $arch output files ==="

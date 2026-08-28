@@ -449,9 +449,9 @@ if [ -d "${PROOT_DIR}" ]; then
                 log_error "talloc static library not found: ${TALLOC_BUILD}/lib/libtalloc.a"
                 exit 1
             fi
-            export LDFLAGS="-shared -nostdlib -lc -Wl,-z,noexecstack ${TALLOC_BUILD}/lib/libtalloc.a"
+            export LDFLAGS="-shared -lc -Wl,-z,noexecstack ${TALLOC_BUILD}/lib/libtalloc.a"
         else
-            export LDFLAGS="-shared -nostdlib -lc -Wl,-z,noexecstack -L${TALLOC_BUILD}/lib -ltalloc"
+            export LDFLAGS="-shared -lc -Wl,-z,noexecstack -L${TALLOC_BUILD}/lib -ltalloc"
         fi
         
         # proot 在运行时优先使用环境变量 PROOT_LOADER/PROOT_LOADER_32；
