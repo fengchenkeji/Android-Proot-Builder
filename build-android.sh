@@ -245,6 +245,7 @@ if [ -d "${TALLOC_DIR}" ]; then
 #define HAVE_UINTPTR_T 1
 #define HAVE_PTRDIFF_T 1
 #define HAVE_USECONDS_T 1
+#define HAVE_USLEEP 1
 #define HAVE_SSIZE_T 1
 #define HAVE_SIZE_T 1
 #define HAVE_OFF_T 1
@@ -270,6 +271,7 @@ CONFEOF
         "${CC}" -O2 -fPIC -D__STDC_WANT_LIB_EXT1__=1 \
             -DHAVE___THREAD \
             -DHAVE_VA_COPY \
+            -DHAVE_USLEEP \
             -DTALLOC_BUILD_VERSION_MAJOR=2 \
             -DTALLOC_BUILD_VERSION_MINOR=4 \
             -DTALLOC_BUILD_VERSION_RELEASE=2 \
