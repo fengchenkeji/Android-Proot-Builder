@@ -109,7 +109,9 @@ export STRIP="${TOOLCHAIN}/bin/llvm-strip"
 export OBJCOPY="${TOOLCHAIN}/bin/llvm-objcopy"
 export OBJDUMP="${TOOLCHAIN}/bin/llvm-objdump"
 # 编译选项
-export CFLAGS="-O2 -fPIC -fPIE"
+# -fPIC: 位置无关代码（共享库必须）
+# 注意：不使用 -fPIE/-pie，因为 libproot.so 需要是真正的 shared object
+export CFLAGS="-O2 -fPIC"
 export CXXFLAGS="${CFLAGS}"
 export LDFLAGS="-pie"
 # 检查工具链
@@ -207,66 +209,102 @@ if [ -d "${TALLOC_DIR}" ]; then
     if [ "$need_rebuild_talloc" = true ]; then
         cd "${TALLOC_DIR}"
 
-        # 清理之前的构建（关键：删除 waf 缓存 bin 目录，否则跨架构 --prefix 被忽略）
+        # 清理之前的构建
         rm -rf "${TALLOC_BUILD}"
-        rm -rf "${TALLOC_DIR}/bin"
-        rm -f "${TALLOC_DIR}/.lock-waf"*
-        mkdir -p "${TALLOC_BUILD}"
+        mkdir -p "${TALLOC_BUILD}/include" "${TALLOC_BUILD}/lib"
 
-        log_info "配置 talloc..."
-        write_talloc_cross_answers
-        log_info "  cross-answers: ${TALLOC_CROSS_ANSWERS}"
-        log_info "  --prefix=${TALLOC_BUILD}"
+        log_info "手动编译 talloc（直接编译 talloc.c，绕过 waf 交叉编译兼容性问题）..."
         log_info "  CC=${CC}"
+        log_info "  输出: ${TALLOC_BUILD}"
 
-        # 配置 talloc（直接运行，不用管道，确保 set -e 能捕获失败）
-        # --disable-developer: 禁用talloc泄漏检测，避免导出 talloc_enable_leak_report 符号
-        # 该符号在新版talloc(2.4+)中已移除，会导致运行时dlopen失败
-        ./configure \
-            --prefix="${TALLOC_BUILD}" \
-            --cross-compile \
-            --cross-answers="${TALLOC_CROSS_ANSWERS}" \
-            --disable-python \
-            --without-gettext \
-            --disable-developer
+        # 确保 lib/replace/config.h 存在（replace.h 需要它）
+        TALLOC_CONFIG_H="${TALLOC_DIR}/lib/replace/config.h"
+        if [ ! -f "${TALLOC_CONFIG_H}" ]; then
+            log_info "生成 talloc config.h（Android 交叉编译最小配置）..."
+            cat > "${TALLOC_CONFIG_H}" << 'CONFEOF'
+/* config.h for Android cross-compilation of talloc */
+#ifndef _LIBREPLACE_CONFIG_H
+#define _LIBREPLACE_CONFIG_H
+#define HAVE_INTTYPES_H 1
+#define HAVE_STDINT_H 1
+#define HAVE_STDBOOL_H 1
+#define HAVE_BOOL 1
+#define HAVE_UNISTD_H 1
+#define HAVE_FCNTL_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_SYS_STAT_H 1
+#define HAVE_STRING_H 1
+#define HAVE_STRINGS_H 1
+#define HAVE_CTYPE_H 1
+#define HAVE_ERRNO_H 1
+#define HAVE_TIME_H 1
+#define HAVE_SYS_TIME_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STDARG_H 1
+#define HAVE_INTPTR_T 1
+#define HAVE_UINTPTR_T 1
+#define HAVE_PTRDIFF_T 1
+#define HAVE_USECONDS_T 1
+#define HAVE_SSIZE_T 1
+#define HAVE_SIZE_T 1
+#define HAVE_OFF_T 1
+#define HAVE_PID_T 1
+#define HAVE_MODE_T 1
+#define HAVE___THREAD 1
+#define HAVE_VA_COPY 1
+#define HAVE_PTHREAD 1
+#define HAVE_PTHREAD_H 1
+#define HAVE_DLFCN_H 1
+#define HAVE_MATH_H 1
+#define _FILE_OFFSET_BITS 64
+#define TALLOC_BUILD_VERSION_MAJOR 2
+#define TALLOC_BUILD_VERSION_MINOR 4
+#define TALLOC_BUILD_VERSION_RELEASE 2
+#endif
+CONFEOF
+        fi
+
+        # 直接编译 talloc.c
+        # 注意：通过 -D 直接传递版本宏和 TLS 支持，不依赖 config.h 中的定义
+        log_info "编译 talloc.c..."
+        "${CC}" -O2 -fPIC -D__STDC_WANT_LIB_EXT1__=1 \
+            -DHAVE___THREAD \
+            -DHAVE_VA_COPY \
+            -DTALLOC_BUILD_VERSION_MAJOR=2 \
+            -DTALLOC_BUILD_VERSION_MINOR=4 \
+            -DTALLOC_BUILD_VERSION_RELEASE=2 \
+            -I"${TALLOC_DIR}" -I"${TALLOC_DIR}/lib/replace" \
+            -c "${TALLOC_DIR}/talloc.c" -o "${TALLOC_BUILD}/talloc.o"
         if [ $? -ne 0 ]; then
-            log_error "talloc configure 失败！请检查上面的输出"
+            log_error "talloc.c 编译失败！"
             exit 1
         fi
-        log_success "talloc configure 成功"
 
-        # 编译（直接运行，不用 | while 管道，确保 set -e 能捕获 make 失败）
-        log_info "编译 talloc 中（使用 $(nproc) 个并行任务）..."
-        make -j$(nproc) V=1
-        if [ $? -ne 0 ]; then
-            log_error "talloc make 编译失败！"
+        # 打包静态库（无论 static/shared 模式都生成，static 模式 proot 直接链接 .a）
+        log_info "生成静态库 libtalloc.a..."
+        rm -f "${TALLOC_STATIC_LIB}"
+        "${AR}" rcs "${TALLOC_STATIC_LIB}" "${TALLOC_BUILD}/talloc.o"
+        if [ ! -f "${TALLOC_STATIC_LIB}" ]; then
+            log_error "failed to create: ${TALLOC_STATIC_LIB}"
             exit 1
         fi
+        log_success "已生成: ${TALLOC_STATIC_LIB}"
 
-        log_info "安装到构建目录..."
-        make install
-        if [ $? -ne 0 ]; then
-            log_error "talloc make install 失败！"
-            exit 1
-        fi
-
-        # 生成静态库（talloc 默认只安装 .so；为了可选静态链接到 proot，这里从 waf 产物拼一个 .a）
-        if [ "${TALLOC_LINK}" = "static" ]; then
-            log_info "生成静态库 libtalloc.a..."
-            mapfile -t TALLOC_OBJS < <(ls -1 "${TALLOC_DIR}/bin/default"/talloc.c.*.o 2>/dev/null || true)
-            if [ "${#TALLOC_OBJS[@]}" -eq 0 ]; then
-                log_error "talloc objects not found for static archive: ${TALLOC_DIR}/bin/default/talloc.c.*.o"
+        # shared 模式下额外生成 .so（用于输出和 proot 动态链接）
+        if [ "${TALLOC_LINK}" = "shared" ]; then
+            log_info "生成共享库 libtalloc.so.2..."
+            "${CC}" -shared -fPIC -o "${TALLOC_BUILD}/lib/libtalloc.so.2" \
+                "${TALLOC_BUILD}/talloc.o"
+            if [ ! -f "${TALLOC_BUILD}/lib/libtalloc.so.2" ]; then
+                log_error "failed to create libtalloc.so.2"
                 exit 1
             fi
-            mkdir -p "${TALLOC_BUILD}/lib"
-            rm -f "${TALLOC_STATIC_LIB}"
-            "${AR}" rcs "${TALLOC_STATIC_LIB}" "${TALLOC_OBJS[@]}"
-            if [ ! -f "${TALLOC_STATIC_LIB}" ]; then
-                log_error "failed to create: ${TALLOC_STATIC_LIB}"
-                exit 1
-            fi
-            log_success "已生成: ${TALLOC_STATIC_LIB}"
+            log_success "已生成: ${TALLOC_BUILD}/lib/libtalloc.so.2"
         fi
+
+        # 复制头文件
+        cp "${TALLOC_DIR}/talloc.h" "${TALLOC_BUILD}/include/talloc.h"
+        log_success "talloc 编译完成: ${TALLOC_BUILD}"
     else
         log_info "talloc: 跳过编译（已是最新）"
     fi
@@ -402,14 +440,17 @@ if [ -d "${PROOT_DIR}" ]; then
         # 设置 talloc 路径
         TALLOC_BUILD="${SRC_DIR}/talloc-build-${TARGET_ARCH}"
         export CFLAGS="${CFLAGS} -I${TALLOC_BUILD}/include"
+        # proot 编译为真正的 shared object（-shared）
+        # 注意：命令行 LDFLAGS 会覆盖 Makefile 中的 LDFLAGS += ...，
+        #       因此必须手动包含 -ltalloc / -Wl,-z,noexecstack 等所有必要标志。
         if [ "${TALLOC_LINK}" = "static" ]; then
             if [ ! -f "${TALLOC_BUILD}/lib/libtalloc.a" ]; then
                 log_error "talloc static library not found: ${TALLOC_BUILD}/lib/libtalloc.a"
                 exit 1
             fi
-            export LDFLAGS="${LDFLAGS} ${TALLOC_BUILD}/lib/libtalloc.a"
+            export LDFLAGS="-shared -nostdlib -lc -Wl,-z,noexecstack ${TALLOC_BUILD}/lib/libtalloc.a"
         else
-            export LDFLAGS="${LDFLAGS} -L${TALLOC_BUILD}/lib -ltalloc"
+            export LDFLAGS="-shared -nostdlib -lc -Wl,-z,noexecstack -L${TALLOC_BUILD}/lib -ltalloc"
         fi
         
         # proot 在运行时优先使用环境变量 PROOT_LOADER/PROOT_LOADER_32；

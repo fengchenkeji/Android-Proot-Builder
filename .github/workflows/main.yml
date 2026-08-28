@@ -1,29 +1,53 @@
-name: Build‑Proot‑Windows
+name: Build-Proot-Android
 on:
   push:
   workflow_dispatch:
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
-      - name: 设置PowerShell执行权限
-        run: Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
-        shell: powershell
-
-      - name: 拉取源码
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          repository: fengchenkeji/Android-Proot-Builder
-          path: proot-builder
 
-      - name: 原生NDK编译（关闭Docker）
-        working-directory: ./proot-builder
-        run: .\build-proot.ps1 -TallocLink static -UseDocker:$false
-        shell: powershell
+      - name: Build Docker image
+        run: |
+          docker build \
+            --progress=plain \
+            -t proot-builder \
+            -f Dockerfile .
 
-      - name: 上传产物
+      - name: Build PRoot (all architectures)
+        run: |
+          for arch in aarch64 armv7a x86_64; do
+            echo "========================================"
+            echo "Building architecture: $arch"
+            echo "========================================"
+            mkdir -p output/$arch
+            docker run --rm \
+              -v "$(pwd)/output/$arch:/output" \
+              -e TARGET_ARCH=$arch \
+              -e TALLOC_LINK=static \
+              proot-builder
+          done
+
+      - name: Verify artifacts (file type check)
+        run: |
+          echo "=== ELF file verification ==="
+          for f in output/*/libproot.so; do
+            if [ -f "$f" ]; then
+              echo "--- $f ---"
+              file "$f"
+              if file "$f" | grep -q "shared object"; then
+                echo "[OK] is a shared object"
+              else
+                echo "[FAIL] NOT a shared object"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: proot-static-bin
-          path: proot-builder/output/**
-          #retention-days:30
+          name: proot-android
+          path: output/**
