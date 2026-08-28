@@ -59,7 +59,6 @@ clone_if_needed() {
     local branch="$3"
     local dir="$4"
     local marker="$5"
-    local repo_proxy="${6:-}"  # 可选的代理地址
     
     if check_source_exists "$name" "$dir" "$marker"; then
         log_info "$name 源码已存在，跳过克隆"
@@ -69,42 +68,42 @@ clone_if_needed() {
     log_info "克隆 $name 源码..."
     rm -rf "$dir"
     
-    # 优先尝试代理，失败则使用原始地址
-    local clone_success=false
+    # 网络诊断
+    log_info "  测试 GitHub 连通性..."
+    if timeout 10 curl -sI https://github.com >/dev/null 2>&1; then
+        log_info "  GitHub 连通性正常"
+    else
+        log_warn "  GitHub HTTPS 连通性测试失败，仍尝试克隆..."
+    fi
     
-    if [ -n "$repo_proxy" ]; then
-        log_info "  尝试加速代理: ghproxy.com"
-        if timeout 60 git clone --progress --depth=1 --branch "$branch" "$repo_proxy" "$dir" 2>&1; then
-            # 检查目录是否真的存在且有内容
-            if [ -d "$dir" ] && [ "$(ls -A $dir 2>/dev/null)" ]; then
-                clone_success=true
-                log_success "$name 源码克隆完成（使用加速代理）"
+    # 尝试多个镜像源
+    local clone_ok=false
+    local repo_path="${repo#https://github.com/}"
+    local mirrors=("$repo" "https://ghproxy.com/$repo" "https://gitclone.com/github.com/$repo_path")
+    
+    for clone_url in "${mirrors[@]}"; do
+        if [ "$clone_ok" = true ]; then break; fi
+        log_info "  尝试: $clone_url"
+        if timeout 120 git clone --progress --depth=1 --branch "$branch" "$clone_url" "$dir" 2>&1; then
+            if [ -d "$dir" ] && [ "$(ls -A "$dir" 2>/dev/null)" ]; then
+                clone_ok=true
+                log_success "$name 源码克隆完成"
             else
-                log_warn "  代理克隆失败，目录为空"
+                log_warn "  克隆成功但目录为空，重试..."
                 rm -rf "$dir"
             fi
         else
-            log_warn "  代理失败或超时，使用 GitHub 官方源..."
+            log_warn "  克隆失败: $clone_url"
             rm -rf "$dir"
         fi
-    fi
+    done
     
-    if [ "$clone_success" = false ]; then
-        log_info "  仓库: $repo"
-        log_info "  分支: $branch"
-        if git clone --progress --depth=1 --branch "$branch" "$repo" "$dir" 2>&1; then
-            if [ -d "$dir" ] && [ "$(ls -A $dir 2>/dev/null)" ]; then
-                log_success "$name 源码克隆完成"
-            else
-                log_error "$name 克隆失败：目录为空"
-                return 1
-            fi
-        else
-            log_error "$name 克隆失败"
-            return 1
-        fi
+    if [ "$clone_ok" = false ]; then
+        log_error "$name 克隆失败（所有镜像均失败）"
+        return 1
     fi
 }
+
 
 # ============ 标记文件 ============
 
