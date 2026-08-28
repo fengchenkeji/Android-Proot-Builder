@@ -175,6 +175,7 @@ RUN mkdir -p /build/src /build/scripts
 # 复制构建脚本
 COPY build-android.sh /build/scripts/build-android.sh
 COPY prepare-source.sh /build/scripts/prepare-source.sh
+COPY vendor/talloc /build/vendor/talloc
 RUN chmod +x /build/scripts/*.sh
 
 # 默认架构参数

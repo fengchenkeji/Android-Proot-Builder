@@ -203,37 +203,19 @@ main() {
     
     # 2. 下载 talloc 源码（从 Samba 官方 FTP）
     if [ ! -d "$SRC_DIR/talloc" ] || [ ! -f "$SRC_DIR/talloc/talloc.c" ]; then
-        log_info "下载 talloc 源码..."
-        local talloc_version="2.4.2"
-        local talloc_url="https://www.samba.org/ftp/talloc/talloc-${talloc_version}.tar.gz"
-        local talloc_tar="$SRC_DIR/talloc.tar.gz"
-
-        cd "$SRC_DIR"
+        log_info "从 vendor 复制 talloc 源码（避免运行时从 samba.org 下载）..."
         rm -rf "$SRC_DIR/talloc"
         mkdir -p "$SRC_DIR/talloc"
-
-        log_info "  URL: $talloc_url"
-        curl -fL --retry 3 --retry-delay 2 -o "$talloc_tar" "$talloc_url"
-
-        log_info "  解压到: $SRC_DIR/talloc（--strip-components=1）"
-        if ! tar -xzf "$talloc_tar" -C "$SRC_DIR/talloc" --strip-components=1; then
-            log_error "talloc 解压失败，归档目录预览（前 40 行）:"
-            tar -tzf "$talloc_tar" | head -n 40 || true
-            return 1
-        fi
-
+        cp -r /build/vendor/talloc/. "$SRC_DIR/talloc/"
         if [ ! -f "$SRC_DIR/talloc/talloc.c" ]; then
-            log_error "talloc 解压后未找到 talloc.c（归档结构可能变化），目录预览（前 40 行）:"
-            tar -tzf "$talloc_tar" | head -n 40 || true
+            log_error "talloc 复制后未找到 talloc.c，vendor 目录内容:"
+            ls -la /build/vendor/talloc/ || true
             return 1
         fi
-
-        rm -f "$talloc_tar"
-        log_success "talloc 源码下载完成"
+        log_success "talloc 源码复制完成"
     else
-        log_info "talloc 源码已存在，跳过下载"
+        log_info "talloc 源码已存在，跳过"
     fi
-    
     # 3. talloc 交叉编译 cross-answers 文件由 build-android.sh 按架构生成（避免 aarch64/x86_64 冲突与不完整问题）
     
     # 5. 应用必要补丁（幂等）
