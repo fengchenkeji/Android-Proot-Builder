@@ -23,11 +23,21 @@ jobs:
             echo "Building architecture: $arch"
             echo "========================================"
             mkdir -p output/$arch
+            logfile="build-$arch.log"
             docker run --rm \
               -v "$(pwd)/output/$arch:/output" \
               -e TARGET_ARCH=$arch \
               -e TALLOC_LINK=static \
-              proot-builder
+              proot-builder 2>&1 | tee "$logfile"
+            exit_code=${PIPESTATUS[0]}
+            if [ $exit_code -ne 0 ]; then
+              echo "::error::Build failed for $arch (exit code: $exit_code)"
+              echo "=== Last 80 lines of build log ==="
+              tail -80 "$logfile"
+              exit $exit_code
+            fi
+            echo "=== $arch output files ==="
+            ls -la output/$arch/
           done
 
       - name: Verify artifacts (file type check)
@@ -40,9 +50,11 @@ jobs:
               if file "$f" | grep -q "shared object"; then
                 echo "[OK] is a shared object"
               else
-                echo "[FAIL] NOT a shared object"
+                echo "::error::NOT a shared object: $f"
                 exit 1
               fi
+            else
+              echo "::warning::Missing: $f"
             fi
           done
 
