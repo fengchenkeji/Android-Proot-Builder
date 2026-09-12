@@ -2,6 +2,8 @@ name: Build-Proot-Android
 on:
   push:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -82,3 +84,27 @@ jobs:
         with:
           name: proot-android
           path: output/**
+
+      - name: Package release asset
+        if: success()
+        run: |
+          cd output
+          zip -r ../proot-android.zip .
+          cd ..
+          ls -la proot-android.zip
+          echo "=== Zip contents ==="
+          unzip -l proot-android.zip
+
+      - name: Upload to GitHub Release (proot-latest)
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: proot-latest
+          name: "PRoot Android Builds (latest)"
+          body: |
+            Auto-generated proot builds for Android (aarch64, armv7a, x86_64).
+            Built with TALLOC_LINK=static.
+            Contains: libproot.so, libproot-loader.so, libproot-loader32.so (aarch64 only)
+          files: proot-android.zip
+          fail_on_unmatched_files: true
+          make_latest: true
