@@ -78,22 +78,33 @@ jobs:
           ABI: ${{ matrix.abi }}
           ARCH: ${{ matrix.arch }}
         run: |
-          set -e
           API=28
           TOOLCHAIN="$NDK/build/cmake/android.toolchain.cmake"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          echo "=== NDK bin contents (clang) ==="
+          ls "$BIN" | grep -E 'clang$|clang[0-9]' | head -10
 
           mkdir -p build
           cd build
 
-          cmake ../proot-src/src \
+          echo "=== CMake configure ==="
+          if ! cmake ../proot-src/src \
             -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
             -DANDROID_ABI="$ABI" \
             -DANDROID_PLATFORM="android-$API" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DPROOT_BUILD_TEST_EXECUTABLE=OFF
+            -DPROOT_BUILD_TEST_EXECUTABLE=OFF; then
+            echo "::error::CMake configure failed"
+            exit 1
+          fi
 
-          ninja -j"$(nproc)"
+          echo "=== Ninja build ==="
+          if ! ninja -v -j"$(nproc)"; then
+            echo "::error::Ninja build failed"
+            exit 1
+          fi
 
           echo "=== Build output ==="
           find . -name 'libproot.so' -exec ls -la {} \;
@@ -169,14 +180,27 @@ jobs:
           ARCH: ${{ matrix.arch }}
           NDK: ${{ steps.ndk.outputs.ndk_dir }}
         run: |
-          set -e
           SYSROOT="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           cd output/$ARCH
 
-          "$QEMU" -L "$SYSROOT" ./test_dlopen 2>&1 | tee test_output.log
+          echo "=== file test_dlopen ==="
+          file ./test_dlopen
+          echo "=== file libproot.so ==="
+          file ./libproot.so
+          echo "=== readelf -d test_dlopen ==="
+          readelf -d ./test_dlopen | head -10
 
-          grep -q "v5.1.107.92" test_output.log \
-            || { echo "::error::Version string not found"; exit 1; }
+          echo "=== Running $QEMU ==="
+          "$QEMU" -L "$SYSROOT" -E LD_LIBRARY_PATH=/lib ./test_dlopen 2>&1 | tee test_output.log
+          ret=${PIPESTATUS[0]}
+          echo "qemu exit code: $ret"
+
+          if ! grep -q "v5.1.107.92" test_output.log; then
+            echo "::error::Version string not found in output"
+            echo "=== Full output ==="
+            cat test_output.log
+            exit 1
+          fi
           echo "::notice::$ARCH qemu dlopen test passed"
 
       - name: Upload per-arch artifact
