@@ -375,10 +375,12 @@ add_custom_command(
     COMMENT "Linking loader executable (Ttext=${LOADER_ADDRESS})"
 )
 
-# Strip and objcopy embed. We must run objcopy from the loader build dir
-# with a relative filename so the embedded symbols are _binary_loader_exe_*.
+# Strip and objcopy embed. We strip a COPY named loader.exe in the build dir
+# so embedded symbols are _binary_loader_exe_*. The unstripped LOADER_EXE
+# is preserved for loader-info.c generation.
 add_custom_command(
     OUTPUT ${LOADER_WRAPPED_O}
+    COMMAND ${CMAKE_COMMAND} -E copy ${LOADER_EXE} loader.exe
     COMMAND ${CMAKE_STRIP} loader.exe
     COMMAND ${CMAKE_OBJCOPY}
         --input-target=binary
@@ -461,6 +463,7 @@ if(HAS_LOADER_32BIT)
 
     add_custom_command(
         OUTPUT ${LOADER_M32_WRAPPED_O}
+        COMMAND ${CMAKE_COMMAND} -E copy ${LOADER_M32_EXE} loader-m32.exe
         COMMAND ${CMAKE_STRIP} loader-m32.exe
         COMMAND ${CMAKE_OBJCOPY}
             --input-target=binary
