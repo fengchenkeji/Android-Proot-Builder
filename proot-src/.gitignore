@@ -1,0 +1,14 @@
+# Build artifacts
+build/
+*.o
+*.d
+*.tmp
+*.o.tmp
+.loader-info.c
+build.h
+loader/loader
+loader/loader-m32
+loader/*.exe
+loader/*-wrapped.o
+# talloc build
+vendor/talloc/lib/replace/config.h
