@@ -1,110 +1,225 @@
 name: Build-Proot-Android
+
 on:
   push:
+    branches: [main]
   workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
   build:
+    name: Build ${{ matrix.arch }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            abi: arm64-v8a
+            triple: aarch64-linux-android
+            qemu: qemu-aarch64-static
+            expect_machine: AArch64
+          - arch: armv7a
+            abi: armeabi-v7a
+            triple: armv7a-linux-androideabi
+            qemu: qemu-arm-static
+            expect_machine: ARM
+
     steps:
-      - name: Checkout
+      - name: Checkout main (workflow)
         uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: |
-          docker build \
-            --progress=plain \
-            -t proot-builder \
-            -f Dockerfile .
+      - name: Checkout proot source branch
+        uses: actions/checkout@v4
+        with:
+          ref: proot
+          path: proot-branch
 
-      - name: Build PRoot (all architectures)
+      - name: Set up source directory
         run: |
-          failed=0
-          for arch in aarch64 armv7a x86_64; do
-            echo "========================================"
-            echo "Building architecture: $arch"
-            echo "========================================"
-            mkdir -p output/$arch
-            logfile="build-$arch.log"
-            docker run --rm \
-              -v "$(pwd)/output/$arch:/output" \
-              -e TARGET_ARCH=$arch \
-              -e TALLOC_LINK=static \
-              proot-builder 2>&1 | tee "$logfile"
-            exit_code=${PIPESTATUS[0]}
-            if [ $exit_code -ne 0 ]; then
-              echo "::error::Build failed for $arch (exit code: $exit_code)"
-              echo "=== Last 100 lines of build log ==="
-              tail -100 "$logfile"
-              # 将关键错误行输出到 annotations（匿名可见）
-              echo "=== Key errors (annotations) ==="
-              grep -iE 'error:|undefined reference|fatal|cannot find|No such file|relocation|ld\.lld|clang.*error' "$logfile" | tail -20 | while IFS= read -r line; do
-                echo "::error::[$arch] $line"
-              done
-              failed=1
-            else
-              echo "=== $arch output files ==="
-              ls -la output/$arch/
+          cp -r proot-branch/proot-src ./proot-src
+          ls -la proot-src/src/CMakeLists.txt
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build \
+            binutils-aarch64-linux-gnu \
+            binutils-arm-linux-gnueabihf \
+            qemu-user-static gawk zip file
+
+      - name: Find Android NDK
+        id: ndk
+        run: |
+          NDK_DIR=""
+          for candidate in \
+            "/usr/local/lib/android/sdk/ndk"/* \
+            "${ANDROID_NDK_HOME:-}" \
+            "${ANDROID_NDK_LATEST_HOME:-}"; do
+            if [ -d "$candidate/toolchains/llvm/prebuilt" ]; then
+              NDK_DIR="$candidate"
+              break
             fi
           done
-          if [ $failed -ne 0 ]; then
-            echo "::error::One or more architectures failed to build"
+          if [ -z "$NDK_DIR" ]; then
+            echo "::error::Android NDK not found on runner"
             exit 1
           fi
+          echo "ndk_dir=$NDK_DIR" >> "$GITHUB_OUTPUT"
+          echo "NDK found at: $NDK_DIR"
+          ls "$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep -E 'clang$' | head -5
 
-      - name: Verify artifacts (file type check)
-        if: always()
+      - name: Build libproot.so with CMake
+        env:
+          NDK: ${{ steps.ndk.outputs.ndk_dir }}
+          ABI: ${{ matrix.abi }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          echo "=== ELF file verification ==="
-          for f in output/*/libproot.so; do
-            if [ -f "$f" ]; then
-              echo "--- $f ---"
-              file "$f"
-              if file "$f" | grep -q "shared object"; then
-                echo "[OK] is a shared object"
-              else
-                echo "::error::NOT a shared object: $f"
-              fi
-            else
-              echo "::warning::Missing: $f"
-            fi
-          done
+          set -e
+          API=28
+          TOOLCHAIN="$NDK/build/cmake/android.toolchain.cmake"
 
-      - name: Upload build logs
-        if: always()
+          mkdir -p build
+          cd build
+
+          cmake ../proot-src/src \
+            -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
+            -DANDROID_ABI="$ABI" \
+            -DANDROID_PLATFORM="android-$API" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPROOT_BUILD_TEST_EXECUTABLE=OFF
+
+          ninja -j"$(nproc)"
+
+          echo "=== Build output ==="
+          find . -name 'libproot.so' -exec ls -la {} \;
+
+      - name: Static verification
+        env:
+          ARCH: ${{ matrix.arch }}
+          EXPECT_MACHINE: ${{ matrix.expect_machine }}
+        run: |
+          set -e
+          SO=$(find build -name 'libproot.so' | head -1)
+          echo "=== file ==="
+          file "$SO"
+
+          echo "=== readelf -h ==="
+          readelf -h "$SO" | grep -E 'Type|Machine'
+
+          readelf -h "$SO" | grep -q 'DYN (Shared object file)' \
+            || { echo "::error::Not a shared object"; exit 1; }
+
+          readelf -h "$SO" | grep -q "$EXPECT_MACHINE" \
+            || { echo "::error::Wrong architecture, expected $EXPECT_MACHINE"; exit 1; }
+
+          echo "=== main symbol ==="
+          readelf -s "$SO" | grep -w main | grep -q 'GLOBAL DEFAULT' \
+            || { echo "::error::main not GLOBAL DEFAULT"; exit 1; }
+          readelf -s "$SO" | grep -w main
+
+          echo "=== loader embedded symbols ==="
+          nm "$SO" | grep _binary_loader | head -10
+
+          echo "::notice::$ARCH static verification passed"
+
+      - name: Cross-compile dlopen test
+        env:
+          NDK: ${{ steps.ndk.outputs.ndk_dir }}
+          TRIPLE: ${{ matrix.triple }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -e
+          API=28
+          CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${TRIPLE}${API}-clang"
+
+          cat > /tmp/test_dlopen.c << 'CEOF'
+          #include <stdio.h>
+          #include <dlfcn.h>
+          typedef int (*main_fn)(int argc, char *argv[]);
+          int main(void) {
+              void *h = dlopen("./libproot.so", RTLD_NOW | RTLD_GLOBAL);
+              if (!h) { fprintf(stderr, "dlopen failed: %s\n", dlerror()); return 1; }
+              printf("[OK] dlopen\n");
+              main_fn fn = (main_fn)dlsym(h, "main");
+              if (!fn) { fprintf(stderr, "dlsym main failed: %s\n", dlerror()); return 1; }
+              printf("[OK] dlsym(main)\n");
+              char *args[] = {"proot", "--version"};
+              int ret = fn(2, args);
+              printf("proot returned %d\n", ret);
+              dlclose(h);
+              return 0;
+          }
+          CEOF
+
+          SO=$(find build -name 'libproot.so' | head -1)
+          mkdir -p output/$ARCH
+          cp "$SO" output/$ARCH/libproot.so
+
+          "$CC" -o output/$ARCH/test_dlopen /tmp/test_dlopen.c -ldl
+          file output/$ARCH/test_dlopen
+
+      - name: Run dlopen test under qemu-user
+        env:
+          QEMU: ${{ matrix.qemu }}
+          ARCH: ${{ matrix.arch }}
+          NDK: ${{ steps.ndk.outputs.ndk_dir }}
+        run: |
+          set -e
+          SYSROOT="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          cd output/$ARCH
+
+          "$QEMU" -L "$SYSROOT" ./test_dlopen 2>&1 | tee test_output.log
+
+          grep -q "v5.1.107.92" test_output.log \
+            || { echo "::error::Version string not found"; exit 1; }
+          echo "::notice::$ARCH qemu dlopen test passed"
+
+      - name: Upload per-arch artifact
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
-          path: build-*.log
+          name: proot-${{ matrix.arch }}
+          path: output/${{ matrix.arch }}/libproot.so
+          retention-days: 30
 
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
+  release:
+    name: Package and release
+    needs: build
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: proot-android
-          path: output/**
+          path: artifacts
 
-      - name: Package release asset
-        if: success()
+      - name: Package release zip
         run: |
-          cd output
-          zip -r ../proot-android.zip .
+          mkdir -p package/aarch64 package/armv7a
+          cp artifacts/proot-aarch64/libproot.so package/aarch64/libproot.so
+          cp artifacts/proot-armv7a/libproot.so package/armv7a/libproot.so
+          cd package
+          zip -r ../proot-android.zip aarch64 armv7a
           cd ..
           ls -la proot-android.zip
-          echo "=== Zip contents ==="
           unzip -l proot-android.zip
 
       - name: Upload to GitHub Release (proot-latest)
-        if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: proot-latest
           name: "PRoot Android Builds (latest)"
           body: |
-            Auto-generated proot builds for Android (aarch64, armv7a, x86_64).
-            Built with TALLOC_LINK=static.
-            Contains: libproot.so, libproot-loader.so, libproot-loader32.so (aarch64 only)
+            Auto-generated proot builds for Android.
+            Built with CMake + Android NDK on Linux (no Docker).
+            talloc statically linked, loader embedded.
+            Contains:
+            - aarch64/libproot.so (arm64-v8a, API 28)
+            - armv7a/libproot.so (armeabi-v7a, API 28)
           files: proot-android.zip
           fail_on_unmatched_files: true
           make_latest: true
