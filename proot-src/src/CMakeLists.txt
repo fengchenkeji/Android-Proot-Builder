@@ -481,7 +481,7 @@ if(HAS_POKEDATA_WORKAROUND)
     set(LOADER_INFO_C ${LOADER_BUILD_DIR}/loader-info.c)
     add_custom_command(
         OUTPUT ${LOADER_INFO_C}
-        COMMAND readelf -s ${LOADER_EXE} | awk -f ${LOADER_SRC_DIR}/loader-info.awk > ${LOADER_INFO_C}
+        COMMAND sh -c "readelf -s '${LOADER_EXE}' | awk -f '${LOADER_SRC_DIR}/loader-info.awk' > '${LOADER_INFO_C}'"
         DEPENDS ${LOADER_EXE} ${LOADER_SRC_DIR}/loader-info.awk
         COMMENT "Generating loader-info.c"
     )
