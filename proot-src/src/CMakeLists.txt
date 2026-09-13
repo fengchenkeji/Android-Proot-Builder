@@ -4,6 +4,16 @@ project(proot C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Ensure objcopy and strip are available (NDK toolchain may not set them)
+if(NOT CMAKE_OBJCOPY)
+    find_program(CMAKE_OBJCOPY objcopy)
+endif()
+if(NOT CMAKE_STRIP)
+    find_program(CMAKE_STRIP strip)
+endif()
+message(STATUS "Using objcopy: ${CMAKE_OBJCOPY}")
+message(STATUS "Using strip: ${CMAKE_STRIP}")
+
 # ============================================================================
 # Configuration
 # ============================================================================
